@@ -1,36 +1,51 @@
+from datetime import datetime
 import os
-from PIL import Image
 import sys
+from PIL import Image
+import win32com.client
 
 
-def convert_images_and_sort_by_creation_date(source_folder, target_folder):
-    # ターゲットフォルダが存在しない場合は作成
+def get_time_taken(path):
+    shell = win32com.client.Dispatch("Shell.Application")
+    folder = shell.NameSpace(os.path.dirname(path))
+    item = folder.ParseName(os.path.basename(path))
+    date_taken = item.ExtendedProperty("System.Photo.DateTaken")
+    if date_taken:
+        # EXIFから得られた日時がoffset-awareな場合、offset-naiveに変換
+        if date_taken.tzinfo is not None and date_taken.tzinfo.utcoffset(date_taken) is not None:
+            date_taken = date_taken.replace(tzinfo=None)
+    else:
+        # 撮影日時が取得できない場合は、ファイルの作成日時を使用
+        try:
+            ctime = os.path.getctime(path)
+            date_taken = datetime.fromtimestamp(ctime)
+        except Exception as e:
+            print(f"Error getting creation time for {path}: {e}")
+            date_taken = datetime.min
+    return date_taken
+
+
+def convert_images_and_sort_by_time_taken(source_folder, target_folder):
     if not os.path.exists(target_folder):
         os.makedirs(target_folder)
 
-    # ソースフォルダ内の画像ファイルを作成日時順に並べ替える
-    files = [os.path.join(source_folder, f) for f in os.listdir(source_folder)]
-    files.sort(key=os.path.getctime)
+    files = [os.path.join(source_folder, f) for f in os.listdir(
+        source_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif'))]
+    files.sort(key=get_time_taken)
 
-    # 連番を初期化
     num = 1
-
-    # 並べ替えたファイルリストを処理
     for filepath in files:
-        # ファイルの拡張子を確認（画像ファイルのみを対象とする）
-        if filepath.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
-            try:
-                with Image.open(filepath) as img:
-                    # RGBAをRGBに変換（JPEG保存の場合）
-                    if img.mode == 'RGBA':
-                        img = img.convert('RGB')
-                    # 新しいファイル名を生成（連番 + ".png"）
-                    new_name = f"{num}.png"
-                    img.save(os.path.join(target_folder, new_name))
-                    print(f"Saved {os.path.basename(filepath)} as {new_name}")
-                    num += 1
-            except Exception as e:
-                print(f"Error processing {filepath}: {e}")
+        try:
+            with Image.open(filepath) as img:
+                if img.mode == 'RGBA':
+                    img = img.convert('RGB')
+                new_name = f"{num}.png"
+                target_path = os.path.join(target_folder, new_name)
+                img.save(target_path)
+                print(f"Saved {os.path.basename(filepath)} as {new_name}")
+                num += 1
+        except Exception as e:
+            print(f"Error processing {filepath}: {e}")
 
 
 if __name__ == "__main__":
@@ -39,4 +54,4 @@ if __name__ == "__main__":
     else:
         source_folder = sys.argv[1]
         target_folder = sys.argv[2]
-        convert_images_and_sort_by_creation_date(source_folder, target_folder)
+        convert_images_and_sort_by_time_taken(source_folder, target_folder)
